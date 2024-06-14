@@ -27,7 +27,7 @@ type Limiter interface {
 }
 
 // LimiterStore defines the interface for a limiter lookup function
-type LimiterStore func(string) Limiter
+type LimiterStore func(key string, maxRate float64, capacity int) Limiter
 
 // Hasher gets a hash for the received string
 type Hasher func(string) uint64

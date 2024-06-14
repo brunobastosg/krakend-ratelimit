@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -171,6 +172,8 @@ func HeaderTokenExtractor(header string) TokenExtractor {
 	return func(c *gin.Context) string { return c.Request.Header.Get(header) }
 }
 
+const rateLimitHeader = "x-rate-limit"
+
 // NewTokenLimiterMw returns a token based ratelimiting endpoint middleware with the received TokenExtractor and LimiterStore
 func NewTokenLimiterMw(tokenExtractor TokenExtractor, limiterStore krakendrate.LimiterStore) EndpointMw {
 	return func(next gin.HandlerFunc) gin.HandlerFunc {
@@ -180,7 +183,20 @@ func NewTokenLimiterMw(tokenExtractor TokenExtractor, limiterStore krakendrate.L
 				c.AbortWithError(http.StatusTooManyRequests, krakendrate.ErrLimited)
 				return
 			}
-			if !limiterStore(tokenKey).Allow() {
+
+			rateLimitFromHeader := c.Request.Header.Get(rateLimitHeader)
+
+			var maxRate float64
+			var capacity int
+			if rateLimitFromHeader != "" {
+				rateLimitFromHeaderInt, err := strconv.Atoi(rateLimitFromHeader)
+				if err == nil {
+					capacity = rateLimitFromHeaderInt
+					maxRate = float64(rateLimitFromHeaderInt)
+				}
+			}
+
+			if !limiterStore(tokenKey, maxRate, capacity).Allow() {
 				c.AbortWithError(http.StatusTooManyRequests, krakendrate.ErrLimited)
 				return
 			}

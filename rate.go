@@ -13,8 +13,15 @@ func NewMemoryStore(maxRate float64, capacity int) LimiterStore {
 
 // NewLimiterStore returns a LimiterStore using the received backend for persistence
 func NewLimiterStore(maxRate float64, capacity int, backend Backend) LimiterStore {
-	f := func() interface{} { return NewTokenBucket(maxRate, uint64(capacity)) }
-	return func(t string) Limiter {
+	return func(t string, dynamicMaxRate float64, dynamicCapacity int) Limiter {
+		if dynamicMaxRate > 0 {
+			maxRate = dynamicMaxRate
+		}
+		if dynamicCapacity > 0 {
+			capacity = dynamicCapacity
+		}
+
+		f := func() interface{} { return NewTokenBucket(maxRate, uint64(capacity)) }
 		return backend.Load(t, f).(*TokenBucket)
 	}
 }
