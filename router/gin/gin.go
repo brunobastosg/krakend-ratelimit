@@ -14,8 +14,8 @@ import (
 	"github.com/luraproject/lura/v2/proxy"
 	krakendgin "github.com/luraproject/lura/v2/router/gin"
 
-	krakendrate "github.com/krakendio/krakend-ratelimit/v3"
-	"github.com/krakendio/krakend-ratelimit/v3/router"
+	krakendrate "github.com/breathbath/krakend-ratelimit/v3"
+	"github.com/breathbath/krakend-ratelimit/v3/router"
 )
 
 // HandlerFactory is the out-of-the-box basic ratelimit handler factory using the default krakend endpoint
