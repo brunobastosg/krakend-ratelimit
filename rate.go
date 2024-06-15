@@ -2,26 +2,37 @@ package krakendrate
 
 import (
 	"context"
+	"fmt"
+	"github.com/luraproject/lura/v2/logging"
 	"sync"
 	"time"
 )
 
 // NewMemoryStore returns a LimiterStore using the memory backend
-func NewMemoryStore(maxRate float64, capacity int) LimiterStore {
-	return NewLimiterStore(maxRate, capacity, DefaultShardedMemoryBackend(context.Background()))
+func NewMemoryStore(maxRate float64, capacity int, logger logging.Logger) LimiterStore {
+	return NewLimiterStore(maxRate, capacity, DefaultShardedMemoryBackend(context.Background()), logger)
 }
 
 // NewLimiterStore returns a LimiterStore using the received backend for persistence
-func NewLimiterStore(maxRate float64, capacity int, backend Backend) LimiterStore {
+func NewLimiterStore(maxRate float64, capacity int, backend Backend, logger logging.Logger) LimiterStore {
 	return func(t string, dynamicMaxRate float64, dynamicCapacity int) Limiter {
 		if dynamicMaxRate > 0 {
+			logger.Debug("setting dynamic max rate to ", dynamicMaxRate)
 			maxRate = dynamicMaxRate
+		} else {
+			logger.Debug("max rate is ", maxRate)
 		}
 		if dynamicCapacity > 0 {
+			logger.Debug("setting dynamic capacity to ", dynamicCapacity)
 			capacity = dynamicCapacity
+		} else {
+			logger.Debug("capacity is ", capacity)
 		}
 
-		f := func() interface{} { return NewTokenBucket(maxRate, uint64(capacity)) }
+		f := func() interface{} {
+			logger.Debug(fmt.Sprintf("creating new token bucket with max rate %.2f and capacity %d", maxRate, capacity))
+			return NewTokenBucket(maxRate, uint64(capacity))
+		}
 		return backend.Load(t, f).(*TokenBucket)
 	}
 }

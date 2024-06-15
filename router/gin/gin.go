@@ -63,10 +63,10 @@ func NewRateLimiterMw(logger logging.Logger, next krakendgin.HandlerFactory) kra
 			switch strategy := strings.ToLower(cfg.Strategy); strategy {
 			case "ip":
 				logger.Debug(logPrefix, fmt.Sprintf("IP-based rate limit enabled. MaxRate: %f, Capacity: %d", cfg.ClientMaxRate, cfg.ClientCapacity))
-				handlerFunc = NewIpLimiterWithKeyMwFromCfg(cfg)(handlerFunc)
+				handlerFunc = NewIpLimiterWithKeyMwFromCfg(cfg, logger)(handlerFunc)
 			case "header":
 				logger.Debug(logPrefix, fmt.Sprintf("Header-based rate limit enabled. MaxRate: %f, Capacity: %d", cfg.ClientMaxRate, cfg.ClientCapacity))
-				handlerFunc = NewHeaderLimiterMwFromCfg(cfg)(handlerFunc)
+				handlerFunc = NewHeaderLimiterMwFromCfg(cfg, logger)(handlerFunc)
 			default:
 				logger.Warning(logPrefix, "Unknown strategy", strategy)
 			}
@@ -95,12 +95,12 @@ func NewEndpointRateLimiterMw(tb *krakendrate.TokenBucket) EndpointMw {
 // NewHeaderLimiterMw creates a token ratelimiter using the value of a header as a token
 //
 // Deprecated: Use NewHeaderLimiterMwFromCfg instead
-func NewHeaderLimiterMw(header string, maxRate float64, capacity uint64) EndpointMw {
-	return NewTokenLimiterMw(HeaderTokenExtractor(header), krakendrate.NewMemoryStore(maxRate, int(capacity)))
+func NewHeaderLimiterMw(header string, maxRate float64, capacity uint64, logger logging.Logger) EndpointMw {
+	return NewTokenLimiterMw(HeaderTokenExtractor(header), krakendrate.NewMemoryStore(maxRate, int(capacity), logger), logger)
 }
 
 // NewHeaderLimiterMwFromCfg creates a token ratelimiter using the value of a header as a token
-func NewHeaderLimiterMwFromCfg(cfg router.Config) EndpointMw {
+func NewHeaderLimiterMwFromCfg(cfg router.Config, logger logging.Logger) EndpointMw {
 	store := krakendrate.NewLimiterStore(
 		cfg.ClientMaxRate,
 		int(cfg.ClientCapacity),
@@ -110,27 +110,29 @@ func NewHeaderLimiterMwFromCfg(cfg router.Config) EndpointMw {
 			cfg.TTL,
 			krakendrate.PseudoFNV64a,
 		),
+		logger,
 	)
-	return NewTokenLimiterMw(HeaderTokenExtractor(cfg.Key), store)
+	logger.Debug("will use token limiter for key ", cfg.Key)
+	return NewTokenLimiterMw(HeaderTokenExtractor(cfg.Key), store, logger)
 }
 
 // NewIpLimiterMw creates a token ratelimiter using the IP of the request as a token
-func NewIpLimiterMw(maxRate float64, capacity uint64) EndpointMw {
-	return NewTokenLimiterMw(IPTokenExtractor, krakendrate.NewMemoryStore(maxRate, int(capacity)))
+func NewIpLimiterMw(maxRate float64, capacity uint64, logger logging.Logger) EndpointMw {
+	return NewTokenLimiterMw(IPTokenExtractor, krakendrate.NewMemoryStore(maxRate, int(capacity), logger), logger)
 }
 
 // NewIpLimiterWithKeyMw creates a token ratelimiter using the IP of the request as a token
 //
 // Deprecated: Use NewIpLimiterWithKeyMwFromCfg instead
-func NewIpLimiterWithKeyMw(header string, maxRate float64, capacity uint64) EndpointMw {
+func NewIpLimiterWithKeyMw(header string, maxRate float64, capacity uint64, logger logging.Logger) EndpointMw {
 	if header == "" {
-		return NewIpLimiterMw(maxRate, capacity)
+		return NewIpLimiterMw(maxRate, capacity, logger)
 	}
-	return NewTokenLimiterMw(NewIPTokenExtractor(header), krakendrate.NewMemoryStore(maxRate, int(capacity)))
+	return NewTokenLimiterMw(NewIPTokenExtractor(header), krakendrate.NewMemoryStore(maxRate, int(capacity), logger), logger)
 }
 
 // NewIpLimiterWithKeyMwFromCfg creates a token ratelimiter using the IP of the request as a token
-func NewIpLimiterWithKeyMwFromCfg(cfg router.Config) EndpointMw {
+func NewIpLimiterWithKeyMwFromCfg(cfg router.Config, logger logging.Logger) EndpointMw {
 	store := krakendrate.NewLimiterStore(
 		cfg.ClientMaxRate,
 		int(cfg.ClientCapacity),
@@ -140,11 +142,14 @@ func NewIpLimiterWithKeyMwFromCfg(cfg router.Config) EndpointMw {
 			cfg.TTL,
 			krakendrate.PseudoFNV64a,
 		),
+		logger,
 	)
 	if cfg.Key == "" {
-		return NewTokenLimiterMw(IPTokenExtractor, store)
+		logger.Debug("will use ip limiter as key is empty")
+		return NewTokenLimiterMw(IPTokenExtractor, store, logger)
 	}
-	return NewTokenLimiterMw(NewIPTokenExtractor(cfg.Key), store)
+	logger.Debug("will use token limiter for key ", cfg.Key)
+	return NewTokenLimiterMw(NewIPTokenExtractor(cfg.Key), store, logger)
 }
 
 // TokenExtractor defines the interface of the functions to use in order to extract a token for each request
@@ -175,12 +180,13 @@ func HeaderTokenExtractor(header string) TokenExtractor {
 const rateLimitHeader = "x-rate-limit"
 
 // NewTokenLimiterMw returns a token based ratelimiting endpoint middleware with the received TokenExtractor and LimiterStore
-func NewTokenLimiterMw(tokenExtractor TokenExtractor, limiterStore krakendrate.LimiterStore) EndpointMw {
+func NewTokenLimiterMw(tokenExtractor TokenExtractor, limiterStore krakendrate.LimiterStore, logger logging.Logger) EndpointMw {
 	return func(next gin.HandlerFunc) gin.HandlerFunc {
 		return func(c *gin.Context) {
 			tokenKey := tokenExtractor(c)
 
 			if tokenKey == "" {
+				logger.Error("No token found in headers under the configured key")
 				c.AbortWithError(http.StatusTooManyRequests, krakendrate.ErrLimited)
 				return
 			}
@@ -190,14 +196,24 @@ func NewTokenLimiterMw(tokenExtractor TokenExtractor, limiterStore krakendrate.L
 			var maxRate float64
 			var capacity int
 			if rateLimitFromHeader != "" {
+				logger.Debug(fmt.Sprintf("Got rate limit %s", rateLimitFromHeader))
 				rateLimitFromHeaderInt, err := strconv.Atoi(rateLimitFromHeader)
 				if err == nil {
 					capacity = rateLimitFromHeaderInt
 					maxRate = float64(rateLimitFromHeaderInt)
+					logger.Debug(fmt.Sprintf("Max rate %.2f, capacity %d", maxRate, capacity))
+				} else {
+					logger.Error("failed to parse rate limit from header", err)
 				}
 			}
 
 			if !limiterStore(tokenKey, maxRate, capacity).Allow() {
+				logger.Error(fmt.Sprintf(
+					"rate limit with max rate %.2f and capacity %d for token %s is exceeded",
+					maxRate,
+					capacity,
+					tokenKey,
+				))
 				c.AbortWithError(http.StatusTooManyRequests, krakendrate.ErrLimited)
 				return
 			}
