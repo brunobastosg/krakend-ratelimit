@@ -10,13 +10,15 @@ import (
 
 var (
 	// ErrLimited is the error returned when the rate limit has been exceded
-	ErrLimited = errors.New("ERROR: rate limit exceded")
+	ErrLimited = errors.New("rate limit exceded")
 
 	// DataTTL is the default eviction time
 	DataTTL = 10 * time.Minute
 
-	now           = time.Now
-	shards uint64 = 2048
+	// DefaultShards are the number of shards to create by default
+	DefaultShards uint64 = 2048
+
+	now = time.Now
 )
 
 // Limiter defines a simple interface for a rate limiter
@@ -25,7 +27,7 @@ type Limiter interface {
 }
 
 // LimiterStore defines the interface for a limiter lookup function
-type LimiterStore func(string) Limiter
+type LimiterStore func(key string, maxRate float64, capacity int) Limiter
 
 // Hasher gets a hash for the received string
 type Hasher func(string) uint64
@@ -45,7 +47,7 @@ type ShardedMemoryBackend struct {
 
 // DefaultShardedMemoryBackend is a 2018 sharded ShardedMemoryBackend
 func DefaultShardedMemoryBackend(ctx context.Context) *ShardedMemoryBackend {
-	return NewShardedMemoryBackend(ctx, shards, DataTTL, PseudoFNV64a)
+	return NewShardedMemoryBackend(ctx, DefaultShards, DataTTL, PseudoFNV64a)
 }
 
 // NewShardedMemoryBackend returns a ShardedMemoryBackend with 'shards' shards
@@ -116,7 +118,7 @@ type MemoryBackend struct {
 func (m *MemoryBackend) manageEvictions(ctx context.Context, ttl time.Duration) {
 	t := time.NewTicker(ttl)
 	for {
-		keysToDel := []string{}
+		var keysToDel []string
 
 		select {
 		case <-ctx.Done():
