@@ -25,6 +25,7 @@ type Config struct {
 	Strategy       string
 	ClientMaxRate  float64
 	ClientCapacity uint64
+	RateFactor     float64
 	Key            string
 	TTL            time.Duration
 }
@@ -105,6 +106,7 @@ func ConfigGetter(e config.ExtraConfig) (Config, error) {
 		factor := float64(time.Second) / float64(every)
 		cfg.MaxRate = cfg.MaxRate * factor
 		cfg.ClientMaxRate = cfg.ClientMaxRate * factor
+		cfg.RateFactor = factor
 
 		if every > cfg.TTL {
 			cfg.TTL = time.Duration(int64((1 + 0.25*rand.Float64()) * float64(every)))
